@@ -459,7 +459,11 @@ class GaussianModel:
         vertices_scale = torch.cat([scale_corner, scale], dim=0)
         
         # Mask out vertices outside of context views
-        vertex_mask = get_frustum_mask(vertices, views, near, far)
+        vertex_mask = torch.zeros(vertices.shape[0], dtype=torch.bool, device="cuda")
+        for camera in views:
+            camera_vertex_mask = get_frustum_mask(vertices, [camera], near, far)
+            vertex_mask |= camera_vertex_mask
+        print(f"Suppressed {(~vertex_mask).sum().item()} vertices outside of frustum")
         return vertices[vertex_mask], vertices_scale[vertex_mask]
     
     def reset_opacity(self):
