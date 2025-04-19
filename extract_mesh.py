@@ -138,7 +138,10 @@ def extract_mesh(dataset : ModelParams, iteration : int, pipeline : PipelinePara
         kernel_size = dataset.kernel_size
         
         cams = scene.getTrainCameras()
-        marching_tetrahedra_with_binary_search(dataset.model_path, "test", iteration, cams, gaussians, pipeline, background, kernel_size, filter_mesh, texture_mesh, near, far)
+        if not hasattr(gaussians, "filter_3D"):
+            print("Did not find filter_3D in the Gaussian model, computing it now...")
+            gaussians.compute_3D_filter(cams)
+        marching_tetrahedra_with_binary_search(dataset.model_path, "train", iteration, cams, gaussians, pipeline, background, kernel_size, filter_mesh, texture_mesh, near, far)
 
 if __name__ == "__main__":
     # Set up command line argument parser
