@@ -29,7 +29,7 @@ from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 try:
     import wandb
-    from wandb_metrics import RGBMetrics
+    from wandb_metrics import RGBMetrics, DepthMetrics
     WANDB_FOUND = True
 except ImportError:
     WANDB_FOUND = False
@@ -190,8 +190,25 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         lambda_distortion = opt.lambda_distortion if iteration >= opt.distortion_from_iter else 0.0
         lambda_depth_normal = opt.lambda_depth_normal if iteration >= opt.depth_normal_from_iter else 0.0
         
+         # Depth regularization
+        Ll1depth_pure = 0.0
+        # if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
+        if viewpoint_cam.depth_reliable:
+            depth_map = apply_depth_colormap(depth[..., None], rendering[7, :, :, None], near_plane=None, far_plane=None)
+            depth_map = depth_map.permute(2, 0, 1)
+            
+            invDepth = depth_map.sum(dim=0)
+            mono_invdepth = viewpoint_cam.invdepthmap.cuda()
+            depth_mask = viewpoint_cam.depth_mask.cuda()
+
+            Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()
+            Ll1depth = 0.2 * Ll1depth_pure 
+            Ll1depth = Ll1depth.item()
+        else:
+            Ll1depth = 0
+
         # Final loss
-        loss = rgb_loss + depth_normal_loss * lambda_depth_normal + distortion_loss * lambda_distortion
+        loss = rgb_loss + depth_normal_loss * lambda_depth_normal + distortion_loss * lambda_distortion + Ll1depth
         loss.backward()
         
         iter_end.record()
@@ -353,8 +370,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                             wandb.log({
                                 "Ground Truth Image": wandb.Image(gt_image[None], caption=config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name)),
                                 },
-                                step=iteration
-                                )
+                                step=iteration,
+                            )
                         rgb_metrics = RGBMetrics()
                         (psnr_m, ssim_m, lpips_m) = rgb_metrics(
                             gt_image.permute(0, 2, 1).unsqueeze(0).to("cuda"),
@@ -369,6 +386,36 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                             },
                             step=iteration,
                         )
+                        # depth_image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["depth"], 0.0, 1.0)
+                        if viewpoint.depth_reliable:
+                            depth_image = rendering[6, :, :]
+                            depth_image_gt = viewpoint.invdepthmap.to("cuda")
+                            print("Depth image shape", depth_image.shape)
+                            print("Depth gt image shape", depth_image_gt.shape)
+
+                            depth_map = apply_depth_colormap(depth_image[..., None], rendering[7, :, :, None], near_plane=None, far_plane=None)
+                            depth_map = depth_map.permute(2, 0, 1)
+                        # print("Depth map shape", depth_map.shape)
+                            
+                            depth_image = depth_map.sum(dim=0)
+                            depth_metrics = DepthMetrics()
+                            # depth_image_gt = torch.clamp(viewpoint.invdepthmap.to("cuda"), 0.0, 1.0)
+                            (abs_rel, sq_rel, rmse, rmse_log, a1, a2, a3) = depth_metrics(
+                                depth_image.unsqueeze(0), depth_image_gt
+                            )
+                            wandb.log({
+                                    "Depth Image": wandb.Image((depth_image[None]), caption=config['name'] + "_view_{}/depth".format(viewpoint.image_name)),
+                                    "Ground Truth Depth Image": wandb.Image((depth_image_gt[None]), caption=config['name'] + "_view_{}/depth_gt".format(viewpoint.image_name)),
+                                    "depth abs_rel": abs_rel,
+                                    "depth sq_rel": sq_rel,
+                                    "depth rmse": rmse,
+                                    "depth rsmse_log": rmse_log,
+                                    "depth a1": a1,
+                                    "depth a2": a2,
+                                    "depth a3": a3,
+                                    },
+                                    step=iteration,
+                            )
 
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
