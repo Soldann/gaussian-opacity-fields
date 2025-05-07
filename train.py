@@ -393,18 +393,27 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                             print("Depth image shape", depth_image.shape)
                             print("Depth gt image shape", depth_image_gt.shape)
 
-                            depth_map = apply_depth_colormap(depth_image[..., None], rendering[7, :, :, None], near_plane=None, far_plane=None)
-                            depth_map = depth_map.permute(2, 0, 1)
+                            depth_map_colour = apply_depth_colormap(depth_image[..., None], rendering[7, :, :, None], near_plane=None, far_plane=None)
+                            depth_map_colour = depth_map_colour.permute(2, 0, 1)
+                            depth_map_colour = depth_map_colour.float()
+                            print("Depth map shape", depth_map_colour.shape)
+                            depth_map = depth_map_colour.sum(dim=0)
+
+                            depth_map_colour_normalized = 255 * (depth_map_colour - depth_map_colour.min()) / (depth_map_colour.max() - depth_map_colour.min() + 1e-5)  # Avoid division by zero
+                            depth_map_colour_8b = depth_map_colour_normalized.to(torch.uint8)
+
+                            depth_map_normalized = 255 * (depth_map - depth_map.min()) / (depth_map.max() - depth_map.min() + 1e-5)  # Avoid division by zero
+                            depth_map_8b = depth_map_normalized.to(torch.uint8)
                         # print("Depth map shape", depth_map.shape)
                             
-                            depth_image = depth_map.sum(dim=0)
                             depth_metrics = DepthMetrics()
                             # depth_image_gt = torch.clamp(viewpoint.invdepthmap.to("cuda"), 0.0, 1.0)
                             (abs_rel, sq_rel, rmse, rmse_log, a1, a2, a3) = depth_metrics(
-                                depth_image.unsqueeze(0), depth_image_gt
+                                depth_map.unsqueeze(0), depth_image_gt
                             )
                             wandb.log({
-                                    "Depth Image": wandb.Image((depth_image[None]), caption=config['name'] + "_view_{}/depth".format(viewpoint.image_name)),
+                                    "Depth Image": wandb.Image((depth_map_8b[None]), caption=config['name'] + "_view_{}/depth".format(viewpoint.image_name)),
+                                    "Depth Image Colour": wandb.Image((depth_map_colour_8b[None]), caption=config['name'] + "_view_{}/depth".format(viewpoint.image_name)),
                                     "Ground Truth Depth Image": wandb.Image((depth_image_gt[None]), caption=config['name'] + "_view_{}/depth_gt".format(viewpoint.image_name)),
                                     "depth abs_rel": abs_rel,
                                     "depth sq_rel": sq_rel,
@@ -446,8 +455,8 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1_000, 7_000, 15_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[1_000, 7_000, 15_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)

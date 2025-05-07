@@ -412,9 +412,7 @@ def readNerfstudioCamerasFromTransforms(path, transformsfile, white_background):
             invdepthmap=None
             if "depth_file_path" in frame:
                 depth_path = os.path.join(path, frame["depth_file_path"])
-                invdepthmap = np.load(depth_path)
-                # Convert to float32 for processing
-                invdepthmap = invdepthmap.astype(np.float32)
+                invdepthmap = np.load(depth_path).astype(np.float32) * 0.001 # convert to mm
 
                 # Mask out NaN and infinite values
                 mask = np.isfinite(invdepthmap)
