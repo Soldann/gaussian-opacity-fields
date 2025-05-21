@@ -412,22 +412,22 @@ def readNerfstudioCamerasFromTransforms(path, transformsfile, white_background):
             invdepthmap=None
             if "depth_file_path" in frame:
                 depth_path = os.path.join(path, frame["depth_file_path"])
-                invdepthmap = np.load(depth_path).astype(np.float32) * 0.001 # convert to mm
+                invdepthmap = np.load(depth_path).astype(np.float32) # load in m
 
                 # Mask out NaN and infinite values
                 mask = np.isfinite(invdepthmap)
                 valid_pixels = invdepthmap[mask]
 
                 # Normalize only valid pixels
-                if valid_pixels.size > 0:
-                    min_val = np.min(valid_pixels)
-                    max_val = np.max(valid_pixels)
-                    normalized = np.zeros_like(invdepthmap, dtype=np.float32)
-                    normalized[mask] = ((invdepthmap[mask] - min_val) / (max_val - min_val)).astype(np.float32)
-                else:
-                    normalized = np.zeros_like(invdepthmap, dtype=np.float32)
+                # if valid_pixels.size > 0:
+                #     min_val = np.min(valid_pixels)
+                #     max_val = np.max(valid_pixels)
+                #     normalized = np.zeros_like(invdepthmap, dtype=np.float32)
+                #     normalized[mask] = ((invdepthmap[mask] - min_val) / (max_val - min_val)).astype(np.float32)
+                # else:
+                #     normalized = np.zeros_like(invdepthmap, dtype=np.float32)
 
-                invdepthmap = normalized
+                invdepthmap = valid_pixels
 
             if idx in i_train:
                 train_cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image, invdepthmap=invdepthmap,

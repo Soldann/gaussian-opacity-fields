@@ -194,14 +194,27 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         Ll1depth_pure = 0.0
         # if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
         if viewpoint_cam.depth_reliable:
-            depth_map = apply_depth_colormap(depth[..., None], rendering[7, :, :, None], near_plane=None, far_plane=None)
-            depth_map = depth_map.permute(2, 0, 1)
+            depth_map = rendering[6:7, :, :]
+            alpha = rendering[7:8, :, :]
             
-            invDepth = depth_map.sum(dim=0)
-            mono_invdepth = viewpoint_cam.invdepthmap.cuda()
-            depth_mask = viewpoint_cam.depth_mask.cuda()
+            if viewpoint_cam.gt_alpha_mask is not None:
+                depth_map = torch.where(viewpoint_cam.gt_alpha_mask < 0.5, torch.tensor(0, dtype=depth_map.dtype, device=depth_map.device), depth_map)
 
-            Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()
+            depth_map = torch.where(alpha < 0.5, torch.tensor(0, dtype=depth_map.dtype, device=depth_map.device), depth_map)
+            depth_map = depth_map.permute(0, 1, 2)
+            
+            invDepth = depth_map
+            max_depth_threshold=100
+            mono_invdepth = viewpoint_cam.invdepthmap.cuda()
+            # print("MyData")
+            # print("generated_depth stats", invDepth.min(), invDepth.max(), invDepth.mean())
+            # print("gt_depth stats", mono_invdepth.min(), mono_invdepth.max(), mono_invdepth.mean())
+            # print(mono_invdepth)
+            # print(invDepth)
+            depth_mask = viewpoint_cam.depth_mask.cuda()
+            valid_mask = ((invDepth != 0) & (invDepth < max_depth_threshold) & (viewpoint_cam.invdepthmap < max_depth_threshold)).cuda()
+
+            Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask * valid_mask).mean()
             Ll1depth = 0.2 * Ll1depth_pure 
             Ll1depth = Ll1depth.item()
         else:
@@ -397,24 +410,48 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                             depth_map_colour = depth_map_colour.permute(2, 0, 1)
                             depth_map_colour = depth_map_colour.float()
                             print("Depth map shape", depth_map_colour.shape)
-                            depth_map = depth_map_colour.sum(dim=0)
+                            
+                            depth_map = rendering[6:7, :, :]
+                            alpha = rendering[7:8, :, :]
+                            
+                            if viewpoint.gt_alpha_mask is not None:
+                                depth_map = torch.where(viewpoint.gt_alpha_mask < 0.5, torch.tensor(0, dtype=depth_map.dtype, device=depth_map.device), depth_map)
 
+                            depth_map = torch.where(alpha < 0.5, torch.tensor(0, dtype=depth_map.dtype, device=depth_map.device), depth_map)
+                            depth_map = depth_map.permute(0, 1, 2)
+                            
                             depth_map_colour_normalized = 255 * (depth_map_colour - depth_map_colour.min()) / (depth_map_colour.max() - depth_map_colour.min() + 1e-5)  # Avoid division by zero
                             depth_map_colour_8b = depth_map_colour_normalized.to(torch.uint8)
 
                             depth_map_normalized = 255 * (depth_map - depth_map.min()) / (depth_map.max() - depth_map.min() + 1e-5)  # Avoid division by zero
                             depth_map_8b = depth_map_normalized.to(torch.uint8)
+
+                            invdepthmap = depth_image_gt.cpu().numpy()
+                            mask = np.isfinite(invdepthmap)
+                            valid_pixels = invdepthmap[mask]
+
+                            # Normalize only valid pixels
+                            if valid_pixels.size > 0:
+                                min_val = np.min(valid_pixels)
+                                max_val = np.max(valid_pixels)
+                                normalized = np.zeros_like(invdepthmap, dtype=np.float32)
+                                normalized[mask] = ((invdepthmap[mask] - min_val) / (max_val - min_val)).astype(np.float32)
+                            else:
+                                normalized = np.zeros_like(invdepthmap, dtype=np.float32)
+                            depth_map_gt_normalized = (depth_image_gt - depth_image_gt.min()) / (depth_image_gt.max() - depth_image_gt.min() + 1e-5)  # Avoid division by zero
+                            depth_map_gt_8b = depth_map_gt_normalized.to(torch.uint8)
                         # print("Depth map shape", depth_map.shape)
                             
                             depth_metrics = DepthMetrics()
                             # depth_image_gt = torch.clamp(viewpoint.invdepthmap.to("cuda"), 0.0, 1.0)
                             (abs_rel, sq_rel, rmse, rmse_log, a1, a2, a3) = depth_metrics(
-                                depth_map.unsqueeze(0), depth_image_gt
+                                depth_map, depth_image_gt
                             )
                             wandb.log({
                                     "Depth Image": wandb.Image((depth_map_8b[None]), caption=config['name'] + "_view_{}/depth".format(viewpoint.image_name)),
                                     "Depth Image Colour": wandb.Image((depth_map_colour_8b[None]), caption=config['name'] + "_view_{}/depth".format(viewpoint.image_name)),
                                     "Ground Truth Depth Image": wandb.Image((depth_image_gt[None]), caption=config['name'] + "_view_{}/depth_gt".format(viewpoint.image_name)),
+                                    "Other Image": wandb.Image((normalized[None]), caption=config['name'] + "_view_{}/depth_gt".format(viewpoint.image_name)),
                                     "depth abs_rel": abs_rel,
                                     "depth sq_rel": sq_rel,
                                     "depth rmse": rmse,
